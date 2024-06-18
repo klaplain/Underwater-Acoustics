@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.1.3/dist/css/bootstrap.min.css"
+    integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+
+  <title>Underwater Acoustics Acquistion</title>
+</head>
+
+<body>
+  <div class="mx-auto" style="width: 700px;">
+    <h1>Underwater Acoustics Acquistion</h1>
+  </div>
+
+  <form action="" #" method="post">
+
+    <div class="container">
+      <div class="row">
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="samplingFreq">Sample Freq (kHz)</label>
+            <select class="form-control" id="samplingFreq" value = samplingFreq name="samplingFreq">
+              <option>800</option>
+              <option>533</option>
+              <option>400</option>
+              <option>320</option>
+              <option>266</option>
+              <option>200</option>
+              <option>100</option>
+              <option>50</option>
+              <option>25</option>
+              <option>12</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="gain">Gain</label>
+            <select class="form-control" id="gain" placeholder=gain value=gain name="gain">
+              <option>1</option>
+              <option>2</option>
+              <option>4</option>
+              <option>8</option>
+              <option>16</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="duration">Duration (secs)</label>
+            <input type="text" class="form-control" id="duration" placeholder=1 value=1 name="duration">
+          </div>
+        </div>
+
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="filePrefix">File Prefix</label>
+            <input type="text" class="form-control" id="filePrefix" placeholder="SS" value="SS" name="filePrefix">
+          </div>
+        </div>
+
+      </div>
+      <div class="container">
+        <div class="form-group">
+          <button type="record2" name="button" value="record2" class="btn btn-danger">Record</button>
+        </div>
+      </div>
+  
+    </div>
+
+    <div class="container">
+      <div class="row">
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="hydrophoneArrayName">Hydrophone Array Name</label>
+            <input type="text" class="form-control" id="hydrophoneArrayName" placeholder="BARN Hydrophone 1"
+              value="BARN Hydrophone 1" name="hydrophoneArrayName">
+          </div>
+        </div>
+
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="projectName">Project Name</label>
+            <input type="text" class="form-control" id="projectName" placeholder="Barn Project 1" value="Barn Project 1"
+              name="projectName">
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="row">
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="lat">Latitude</label>
+            <input type="text" class="form-control" id="lat" placeholder="47.64432" value="47.64432" name="lat">
+          </div>
+        </div>
+
+        <div class="col-sm">
+          <div class="form-group">
+            <label for="long">Longitude</label>
+            <input type="text" class="form-control" id="long" placeholder="-122.52250" value="-122.52250" name="long">
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <div class="container">
+      <div class="form-group">
+        <label for="file">Acquisition File</label>
+        <select class="form-control" id="file" name="file">
+          {% for fileItem in directory_list[1:] %}
+          <option>{{fileItem}}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="form-group">
+        <button type="transfer" name="button" value="transfer" class="btn btn-success">Transfer to Pi</button>
+        <button type="delete" name="button" value="delete" class="btn btn-danger">Delete File</button>
+        <button type="formatSD" name="button" value="formatSD" class="btn btn-danger">Format SD</button>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="form-group">
+        <label for="wavfile">WAV File</label>
+        <select class="form-control" id="wavfile" name="wavfile">
+          {% for wavfileItem in raspifile_list %}
+          <option>{{wavfileItem}}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="form-group">
+         <button type="download" name="button" value="download" class="btn btn-success">Download WAV File</button>
+         <button type="analyze" name="button" value="analyze" class="btn btn-success">Analyze WAV File</button>
+         <button type="deletewav" name="button" value="deletewav" class="btn btn-danger">Delete WAV File</button>
+      </div>
+    </div>
+
+  </form>
+
+  <!-- Optional JavaScript -->
+  <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
+    integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.14.3/dist/umd/popper.min.js"
+    integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.1.3/dist/js/bootstrap.min.js"
+    integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy"
+    crossorigin="anonymous"></script>
+</body>
+
+</html>
