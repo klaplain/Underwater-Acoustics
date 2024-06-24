@@ -14,16 +14,13 @@ import scipy.io.wavfile as wavfile
 import math
 
 # SPI Command IDs for Acquisition Subsystem
-DIRECTORY = 0
-RECORD = 1
-STOP = 2
+DIRECTORY = 2
 DATETIME = 3
 LOCATION =4
-SAVE = 5
+TRANSFER = 5
 FORMAT = 6
 DELETE = 7
-FILEXFER = 8
-REC2 = 9
+RECORD = 9
 
 # Set defaults for global variables
 fourbytestoread=[0,0,0,0]
@@ -41,140 +38,195 @@ bus = 0  # We only have SPI bus 0 available to us on the Pi
 device = 0 #Device is the chip select pin. Set to 0 or 1, depending on the connections
 spi = spidev.SpiDev() # Enable SPI
 spi.open(bus, device) # Open a connection to a specific bus and device (chip select pin)
-spi.max_speed_hz = 5000000  # Set SPI speed and mode
+spi.max_speed_hz = 1000000  # Set SPI speed and mode
 spi.mode = 0
 
 def initialize():
     print("Initializing")
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP) # STM32 SPI Busy
+    GPIO.setwarnings(False)
+    GPIO.setup(22, GPIO.OUT) # Reset STM32
+    GPIO.output(22, GPIO.LOW)
+    time.sleep(0.5)
+    GPIO.output(22, GPIO.HIGH) #now release RESET pin
 
+    GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP) # STM32 SPI Busy
     set_datetime()
     time.sleep(0.5)  # need to give the STM32 a break
 
-def create_histogram(wavfilename):
-    Fs, aud = wavfile.read(wavfilename)
-    print ("Creating Histogram ",aud.shape)
-    # select left channel only
-    # aud = aud[:,0]
-    # trim the first 125 seconds
-    first = aud[:int(Fs*200)]
+def directory():  # Code 0
+    print("SD Directory")
+    msg= [DIRECTORY,0,DIRECTORY,0,DIRECTORY,0,DIRECTORY,0]
+    directory_listing=""
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready
+    spi.writebytes(msg)
+    while True:
+        while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready
+        spi.xfer(onebytetoread)
+        directory_listing=directory_listing+chr(onebytetoread[0])
+        if onebytetoread[0]==12:   #12 signifies the end of the directory listing
+            break
+    directory_list = directory_listing.split(chr(10))
+    #print(directory_listing)
 
-    # powerSpectrum, frequenciesFound, time, imageAxis = plt.specgram(first, Fs=Fs)
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    print("End of Directory")
+    return directory_list
 
-
-    plt.specgram(first, Fs=Fs, cmap="rainbow")
-
-    # Set the title of the plot, xlabel and ylabel
-    # and display using show() function
-    plt.title("Spectrogram")
-    plt.ylabel("Frequency (Hz)")
-    plt.xlabel("Time (secs)")
-    # plt.show()
-    print("H4")
-    plt.savefig("static/hist.png")
-
-def set_datetime(): # Function to set date and time on Acquisition Subsystem
+def set_datetime(): # Function to set date and time on Acquisition Subsystem Code 3
     print("Set datetime")
     now=datetime.datetime.now()
-    msg= [DATETIME,now.hour,now.minute,now.second,4,now.month,now.day,now.year-2000,0]
+    msg= [DATETIME,now.hour,now.minute,now.second,4,now.month,now.day,now.year-2000]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
     spi.writebytes(msg)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    return
 
-def record2(samplingFreq, gain, duration,filePrefix):
+def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):   # Code 5 - TRANSFER
+    this_filename =file.split(" ")[0][2:]
+    filename_bytes=bytes(this_filename, "utf8")
+    print("Transfer to Pi",this_filename)
+    msg= [TRANSFER,0,0,0,0,0,0,0]
+
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+
+    # we have just sent the 8 byte packet.
+    # Now we need to send length of filename as a 16 bit int
+
+    msg=[len(this_filename) >>8, len(this_filename)]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+
+    # now we send the filename
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data
+    spi.writebytes(filename_bytes)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+
+    #open file for writing on RASPI.  We can do this to kill time before the AcqSystem is ready
+    f=open("./download/"+this_filename[:-3]+"WAV","wb")
+    print("File opened", this_filename[:-3]+"WAV")
+
+    #Get bytecount
+    time.sleep(0.1) # give STM time to set the busy flag
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before requesting/reading bytecount
+    print("reading bytecount")
+    fourbytestoread=[0,0,0,0]
+    spi.xfer(fourbytestoread)
+    TotalBytes= (fourbytestoread[0])+(fourbytestoread[1]<<8)+(fourbytestoread[2]<<16)+(fourbytestoread[3]<<24)
+    TotalBytes = 1572908
+    TotalInts=TotalBytes>>1
+    print("Bytes =", TotalBytes,"Ints =",TotalInts)
+    tic = time.perf_counter()
+
+    #Get file data
+    for this_int in range(TotalInts):
+        while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading next word
+        spi.xfer(twobytestoread)
+        f.write(twobytestoread[0].to_bytes(1,'big'))
+        f.write(twobytestoread[1].to_bytes(1,'little'))
+    toc = time.perf_counter()
+    print(f"Time to save {toc - tic:0.4f} seconds")
+    f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
+    f.close()
+    print("save done")
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    #while False : pass
+    return
+
+def format():   # Code 6
+    print("Format SD")
+    msg= [FORMAT,0,FORMAT,0,FORMAT,0,FORMAT,0]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    print("Format Complete")
+    return
+
+def delete(file):   # Code 7
+    this_filename =file.split(" ")[0][2:]
+    filename_bytes=bytes(this_filename, "utf8")
+    print("Delete",this_filename)
+    msg= [DELETE,0,0,0,0,0,0,0]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+
+    # we have just sent the 8 byte packet.  Now we need to send the filename
+    # first we need to send length of filename as a 16 bit int
+
+    msg=[len(this_filename) >>8, len(this_filename)]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+
+    # now we send the filename
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data
+    spi.writebytes(filename_bytes)
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+
+    print("Deletion Complete")
+    return
+
+def record(samplingFreq, gain, duration,filePrefix):   # Code 9
     samplingFreq_default = samplingFreq
     gain_default =  gain
     duration_default = duration
     filePrefix_default = filePrefix
     print("Recording",samplingFreq, gain, duration,filePrefix)
-
-    set_datetime()
+    #set_datetime()
     this_filename = filePrefix+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+".DAT"
     filename_bytes=bytes(this_filename, "utf8")
-    time.sleep(0.5)  # need to give the STM32 a break
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    print("Recording Start")
+    print("Recording Start", this_filename)
     duration = int(duration)*1000
-    msg= [REC2,((int(samplingFreq) >>8) & 0xff),(int(samplingFreq) & 0xff),int(gain),((int(duration) >>8) & 0xff),(int(duration) & 0xff),((int(0) >>8) & 0xff),(int(0) & 0xff)]
+    msg= [RECORD,((int(samplingFreq) >>8) & 0xff),(int(samplingFreq) & 0xff),int(gain),((int(duration) >>8) & 0xff),(int(duration) & 0xff),((int(0) >>8) & 0xff),(int(0) & 0xff)]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
     spi.writebytes(msg)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
+    # we have just sent the 8 byte packet.  Now we need to send the filename
+
+    # first we need to send length of filename as a 16 bit int
+    msg=[len(this_filename) >>8, len(this_filename)]
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
+    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
+
+    # now we send the filename
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data (what on earth are we reading?
     spi.writebytes(filename_bytes)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
+    time.sleep(0.1) #Give STM ACQ time to set Busy
+    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
     print("Recording Complete")
+    return
 
-def directory():
-    print("SD Directory")
-    msg= [DIRECTORY,0,0,0,0,0,0,0]
-    directory_listing=""
-    spi.writebytes(msg)
-    while True:
-        while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-            pass
-        spi.xfer(onebytetoread)
-        directory_listing=directory_listing+chr(onebytetoread[0])
-        print(".",end='') # truly horrible way to create a delay
-        if onebytetoread[0]==12:
-            break
-    directory_list = directory_listing.split(chr(10))
-    print("End of Directory")
-    return directory_list
-
+def create_histogram(wavfilename):
+    Fs, aud = wavfile.read(wavfilename)
+    print ("Creating Histogram ",wavfilename, aud.shape)
+    # select left channel only
+    # aud = aud[:,0]
+    # trim the first 125 seconds
+    first = aud[:int(Fs*200)]
+    # powerSpectrum, frequenciesFound, time, imageAxis = plt.specgram(first, Fs=Fs)
+    plt.specgram(first, Fs=Fs, cmap="rainbow")
+    # Set the title of the plot, xlabel and ylabel
+    # and display using show() function
+    plt.title("Spectrogram"+wavfilename)
+    plt.ylabel("Frequency (Hz)")
+    plt.xlabel("Time (secs)")
+    # plt.show()
+    print("H4")
+    plt.savefig("static/hist.png")
+    return
 
 def analyze(filename):
     print("Analyze ","./download/"+filename)
     create_histogram("./download/"+filename)
-
-def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):
-    filename =file.split(" ")[0][2:]
-    filename_bytes=bytes(filename, "utf8")
-    print("Transfer to Pi",filename)
-
-    time.sleep(0.5)  # need to give the STM32 a break
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    msg= [SAVE,0,0,0,0,0,0,0]
-    spi.writebytes(msg)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    # at this point we are in the save_request handler function
-    print(filename_bytes, len(filename))
-    spi.writebytes(filename_bytes)
-
-    #open file for writing on RASPI.  We can do this to kill time before the AcqSystem is ready
-    f=open("./download/"+filename[:-3]+"WAV","wb")
-    print("File opened", filename[:-3]+"WAV")
-    # Wait for the AcqSystem to get the  filelength
-    time.sleep(0.5)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    print("Now getting bytecount")
-    spi.xfer(fourbytestoread)
-    TotalBytes= (fourbytestoread[0])+(fourbytestoread[1]<<8)+(fourbytestoread[2]<<16)+(fourbytestoread[3]<<24)
-    TotalInts=TotalBytes>>1
-    print("Bytes =", TotalBytes,"Ints =",TotalInts)
-
-    tic = time.perf_counter()
-
-    #Get file data
-    for this_int in range(TotalInts):
-        while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-            pass
-        spi.xfer(twobytestoread)
-        f.write(twobytestoread[0].to_bytes(1,'big'))
-        f.write(twobytestoread[1].to_bytes(1,'little'))
-
-    toc = time.perf_counter()
-    print(f"Time to save {toc - tic:0.4f} seconds")
-
-    f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
-
-    f.close()
-    print("save done")
-
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
 
 def createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain): # Function to create Subchunk3 meta data string
     INAM = pad_odd(hydrophoneArrayName)
@@ -229,24 +281,6 @@ def raspi_directory():
             wav_list.append(file)
     return wav_list
 
-def delete(file):
-    filename =file.split(" ")[0][2:]
-    filename_bytes=bytes(filename, "utf8")
-    print("Delete",filename)
-    msg= [DELETE,0,0,0,0,0,0,0]
-    spi.writebytes(msg)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    spi.writebytes(filename_bytes)
-    while GPIO.input(27) == GPIO.HIGH  :   #loop while still Busy
-        pass
-    print("Deletion Complete")
-
-def format():
-    print("Format SD")
-    msg= [FORMAT,0,0,0,0,0,0,0]
-    # spi.writebytes(msg)
-
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
@@ -259,12 +293,13 @@ def download (filename):
 def home():
     if request.method == "POST":
         button = request.form["button"]
-        if button == "record2":
-            record2(request.form["samplingFreq"],request.form["gain"],request.form["duration"],request.form["filePrefix"])
+        if button == "record":
+            record(request.form["samplingFreq"],request.form["gain"],request.form["duration"],request.form["filePrefix"])
         elif button == "directory":
             directory()
         elif button == "transfer":
             transfer(request.form["file"],request.form["hydrophoneArrayName"],request.form["projectName"],request.form["lat"],request.form["long"],request.form["gain"])
+            print("transfer complete")
         elif button == "analyze":
             print("X ",request.form["wavfile"])
             analyze(request.form["wavfile"])
@@ -278,6 +313,11 @@ def home():
             format()
         else:
             print("Do nothing")
+        directory_list = directory()
+        directory_list.sort(reverse=True)
+        raspifile_list = raspi_directory()
+        raspifile_list.sort(reverse=True)
+
         return redirect(url_for("home"))
     else:
         directory_list = directory()
