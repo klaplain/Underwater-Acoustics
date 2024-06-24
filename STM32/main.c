@@ -35,21 +35,16 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 /* ADC -----------------------------------------------------------------------*/
-#define ADCBUFLEN 32768    /* was 32768 */
+#define ADCBUFLEN 32768
 #define BUFFER_FULL 1
 #define BUFFER_EMPTY 0
 /* SPI Message codes ---------------------------------------------------------*/
-#define DIRECTORY 0x00
-#define RECORD 0x01
-#define STOP 0x02
+#define DIRECTORY 0x02
 #define DATETIME 0x03
-#define LOCATION  0x04
 #define SAVE 0x05
 #define FORMAT 0x06
 #define DELETE 0x07
-#define FILEXFER 0x08
 #define REC2 0x09
-
 
 /* USER CODE END PD */
 
@@ -88,7 +83,6 @@ uint32_t adcbuf_index=0;
 
 uint16_t max_save_time_ms;
 uint16_t start_time_ms,ms_taken;
-uint32_t save_times[400];
 int ADC_overrun =0; // set as FALSE
 int overrun_count;
 
@@ -96,8 +90,8 @@ int overrun_count;
 FRESULT result; /* FatFs function common result code */
 FILINFO fno;
 char full_path_name[256];
-char filename[20];
-char fullfilename[20];
+char filename[200];
+char fullfilename[200];
 char filenumber[6];
 char filenametosave[15];
 char filenametodelete[15];
@@ -108,7 +102,7 @@ DWORD fre_clust, fre_sect, tot_sect;
 BYTE work[_MAX_SS]; // for formatting SD
 
 char *SD_Directory2;
-int directory_lines=100;
+int directory_lines=6;
 char SD_space_description[150];
 
 uint16_t current_max_filenumber=0;
@@ -120,6 +114,7 @@ int16_t filevalue;
 /* SPI Variables---------------------------------------------------------------*/
 char SPI_buffer[20];
 char filename_buffer[50];
+uint16_t filesize_buffer[4];
 uint16_t SPI_Buffer[4];
 uint16_t SPI6_NCS;
 uint16_t previous_CS;
@@ -166,19 +161,14 @@ static void MX_USART3_UART_Init(void);
 static void MX_SPI6_Init(void);
 static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
-FRESULT print_file_values(char *filename );
-FRESULT scan_for_latest_file (char* path);
-FRESULT get_SD_directory (char* path);
-FRESULT print_file(char *filename);
-int write_wav_header(int32_t SampleRate,int32_t FrameCount);
 void directory_request_handler();
-void recording_request_handler();
-void recording_request_handler2();
-void save_request_handler();
+FRESULT get_SD_directory (char* path);
 void datetime_request_handler();
+void recording_request_handler2();
+int write_wav_header(int32_t SampleRate,int32_t FrameCount);
 void delete_file_handler();
+void save_request_handler();
 void set_ADC_clock_prescalar(int sampling_fr);
-void file_transfer_request_handler();
 
 /* USER CODE END PFP */
 
@@ -200,7 +190,8 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+
+	HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -229,7 +220,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 	printf("\r\nProgram Start\r\n");
-//	HAL_GPIO_WritePin(SIG_ATTEN_GPIO_Port, SIG_ATTEN_Pin, GPIO_PIN_SET);
+//	HAL_GPIO_WritePin(SIG_ATTEN_GPIO_Port, SIG_ATTEN_Pin, GPIO_PIN_SET);  // Set attenuator to "no attenuation"
 
 	// Let's check the file system and mount it
 	f_mount(0, "", 0);
@@ -238,43 +229,10 @@ int main(void)
 		printf("PANIC: Cannot mount SD Card\r\n");
 		for(;;){}
 	}
-	// Scan to find largest file number
-	strcpy(full_path_name, "/");
-	if(scan_for_latest_file(full_path_name) != FR_OK)
-	{
-		printf("PANIC: Cannot scan SD card\r\n");
-		for(;;){}
-	}
-//	HAL_Delay(1000);
-//	SPI_buffer[0]=3;
-//	SPI_buffer[1]=20;
-//	SPI_buffer[2]=17;
-//	SPI_buffer[3]=0;
-//	SPI_buffer[4]=4;
-//	SPI_buffer[5]=3;
-//	SPI_buffer[6]=20;
-//	SPI_buffer[7]=24;
-//	datetime_request_handler();
-////	directory_request_handler();
-//	HAL_Delay(1000);
-//	SPI_buffer[0]=1;
-//	SPI_buffer[1]=1;
-//	SPI_buffer[2]=0x90;
-//	SPI_buffer[3]=1;
-//	SPI_buffer[4]=0x13;
-//	SPI_buffer[5]=0x88;
-//	SPI_buffer[6]=0;
-//	SPI_buffer[7]=2;
-//	recording_request_handler();
-//	HAL_Delay(1000);
-//	directory_request_handler();
-//
-//	for(;;){}
 
 	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Not Busy
 	previous_CS=HAL_GPIO_ReadPin (SPI6_NCS_GPIO_Port, SPI6_NCS_Pin);  // Need to detect and wait for change in SPI CS (Chip Select)
 	current_CS = previous_CS;
-
 
 	for(;;){
 
@@ -284,27 +242,12 @@ int main(void)
 		if(previous_CS && !current_CS){
 			HAL_SPI_Receive(&hspi6, (uint8_t *)SPI_buffer, 8, 100);
 			HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
-			printf("%02x %02x %02x %02x %02x %02x %02x %02x\r\n",SPI_buffer[0],SPI_buffer[1],SPI_buffer[2],SPI_buffer[3],SPI_buffer[4],SPI_buffer[5],SPI_buffer[6],SPI_buffer[7]);
+			printf("\r\n%02x %02x %02x %02x %02x %02x %02x %02x\r\n",SPI_buffer[0],SPI_buffer[1],SPI_buffer[2],SPI_buffer[3],SPI_buffer[4],SPI_buffer[5],SPI_buffer[6],SPI_buffer[7]);
 			switch(SPI_buffer[0]){
 
-			case DIRECTORY:
+			case DIRECTORY: //Get SD Card directory contents
 				printf("SD Directory Request\r\n");
 				directory_request_handler();
-				break;
-
-			case RECORD:
-				printf("Recording Request\r\n");
-				recording_request_handler();
-				break;
-
-			case REC2:
-				printf("Recording Request2\r\n");
-				recording_request_handler2();
-				break;
-
-			case SAVE:
-				printf("Save\r\n");
-				save_request_handler();
 				break;
 
 			case DATETIME:
@@ -312,18 +255,18 @@ int main(void)
 				datetime_request_handler();
 				break;
 
-			case STOP: // Not supported
-				printf("Stop   ");
-				break;
-
-			case LOCATION:// Not supported
-				printf("Location\r\n");
+			case SAVE:  // Save file to raspberry pi
+				printf("Save\r\n");
+				save_request_handler();
 				break;
 
 			case FORMAT:// Format SD card
 				printf("Format SD - Sector size %d\r\n",sizeof(work));
-				result= f_mkfs("", FM_ANY, 0, work, sizeof(work));
-				current_max_filenumber=1;
+				if((SPI_buffer[2] == FORMAT) && (SPI_buffer[4] == FORMAT) && (SPI_buffer[6] == FORMAT)){
+					result= f_mkfs("", FM_ANY, 0, work, sizeof(work));
+					directory_lines=6;
+					printf("Formated SD");
+				}
 				break;
 
 			case DELETE:// Delete file
@@ -331,10 +274,15 @@ int main(void)
 				delete_file_handler();
 				break;
 
-			case FILEXFER:
-				printf("File Transfer\r\n");
-				file_transfer_request_handler();
+			case REC2: // Record analog input
+				printf("Recording Request2\r\n");
+				recording_request_handler2();
 				break;
+
+			case 0:
+				for(;;);
+				break;
+
 			}
 		}
 		previous_CS=current_CS;
@@ -856,49 +804,53 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 	//
 }
 
-FRESULT scan_for_latest_file (
-		char* path        /* Start node to be scanned (***also used as work area***) */
-)
+
+void directory_request_handler()
 {
-	FRESULT res;
-	DIR dir;
-	UINT i;
-	static FILINFO fno;
-	int this_filenumber;
-	char partstring[15];
+	HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);				/* Get the RTC current Date */
+	HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);				/* Display time Format: hh:mm:ss */
+	printf("RTC Date Time  %02d:%02d:%02d  %02d-%02d-%2d\r\n",gTime.Hours, gTime.Minutes, gTime.Seconds,gDate.Month,gDate.Date,2000 + gDate.Year);				/* Display date Format: dd-mm-yy */
 
+	/* allocate memory for directory listing */
+	SD_Directory2 = malloc( 100 * directory_lines++ );
 
-	res = f_opendir(&dir, path);                       /* Open the directory */
-	if (res == FR_OK) {
-		for (;;) {
-			res = f_readdir(&dir, &fno);                   /* Read a directory item */
-			if (res != FR_OK || fno.fname[0] == 0) break;  /* Break on error or end of dir */
-			if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-				i = strlen(path);
-				sprintf(&path[i], "/%s", fno.fname);
-				res = scan_for_latest_file(path);                    /* Enter the directory */
-				if (res != FR_OK) break;
-				path[i] = 0;
-			} else {                                       /* It is a file. */
-				if (strstr(fno.fname, "FILE") != NULL) {
-					partstring[0]=fno.fname[4];
-					partstring[1]=fno.fname[5];
-					partstring[2]=fno.fname[6];
-					partstring[3]=fno.fname[7];
-					partstring[4]=0;
-					this_filenumber = atoi(partstring);
-					if(this_filenumber > current_max_filenumber){
-						current_max_filenumber =this_filenumber;
-					}
-				}
-			}
-		}
-		f_closedir(&dir);
+	if( SD_Directory2 == NULL ) {
+		printf("PANIC: unable to allocate required memory\r\n");
 	}
+	/* Get volume information and free clusters of drive 1 */
+	result = f_getfree("0:", &fre_clust, &fs);
+	if (result!= FR_OK){
+		printf("PANIC: unable to determine free space on SD\r\n");
+	}
+	/* Get total sectors and free sectors */
+	tot_sect = (fs->n_fatent - 2) * fs->csize;
+	fre_sect = fre_clust * fs->csize;
+	/* Print free space in unit of KB (assuming 512 bytes/sector) */
+	sprintf(SD_space_description,"%lu KB total drive space.     %lu KB available.\r\n",tot_sect / 2, fre_sect / 2);
+	strcpy( SD_Directory2, SD_space_description);
 
-	return res;
+	/* Get directory contents */
+	strcpy(full_path_name, "/");
+
+	result= get_SD_directory(full_path_name);
+	printf("%s", SD_Directory2);
+	strcat( SD_Directory2, "\f");
+
+	/* Send directory content to raspi */
+	int buffer_index=0;
+	do {
+		SPI_Buffer[0]=SD_Directory2[buffer_index];
+		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
+		HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 1, 5000);
+		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are busy
+	}
+	while(SD_Directory2[buffer_index++] != 12);
+
+	printf("Directory Uploaded\r\n");
+	free(SD_Directory2);
+	directory_lines=5;
+
 }
-
 
 FRESULT get_SD_directory (char* path)        /* Start node to be scanned (***also used as work area***) */
 {
@@ -906,7 +858,7 @@ FRESULT get_SD_directory (char* path)        /* Start node to be scanned (***als
 	DIR dir;
 	UINT i;
 	static FILINFO fno;
-	char this_file[100];
+	char this_file[280];
 
 	res = f_opendir(&dir, path);                       /* Open the directory */
 	if (res == FR_OK) {
@@ -933,400 +885,6 @@ FRESULT get_SD_directory (char* path)        /* Start node to be scanned (***als
 	}
 	return res;
 }
-
-FRESULT print_file_values(char *filename )
-{
-	if(f_open(&SDFile, filename, FA_READ) != FR_OK)
-	{
-		Error_Handler();
-	}
-	else
-	{
-		uint32_t samples =22000;
-		uint32_t k;
-		struct wavfile_header_s wav_header;
-
-		// Read out the header
-		result = f_read(&SDFile, &wav_header,sizeof(wavfile_header_t) , (void *)&bytes_read);
-		if((bytes_read == 0) || (result != FR_OK))
-		{
-			Error_Handler();
-		}
-		else
-		{
-			printf("WAV File Header read out \r\n");
-		}
-
-
-		for (k=0;k<samples;k++)
-		{
-			result = f_read(&SDFile, &read_value,2 , (void *)&bytes_read);
-			if((bytes_read == 0) || (result != FR_OK))
-			{
-				Error_Handler();
-			}
-			else
-			{
-				printf("%d \r\n",(int)read_value);
-			}
-		}
-	}
-	f_close(&SDFile);
-	return FR_OK;
-}
-
-FRESULT print_file(char *filename )
-{
-	char read_buff[16];
-	uint32_t row_address =0;
-	uint32_t this_byte=0;
-	char this_character;
-
-	if(f_open(&SDFile, filename, FA_READ) != FR_OK)
-	{
-		Error_Handler();
-	}
-	else
-	{
-		for(row_address=0;row_address<128;row_address=row_address+16)
-		{
-			result = f_read(&SDFile, &read_buff,16 , (void *)&bytes_read);
-			if ((bytes_read == 0) || (result != FR_OK))
-			{
-				Error_Handler();
-			}
-			else
-			{
-				printf("%08X ",(unsigned int)row_address);
-				for(this_byte=0;this_byte<16;this_byte=this_byte+1)
-				{
-					printf("%02X ", read_buff[this_byte]);
-				}
-				printf(" ");
-				for(this_byte=0;this_byte<16;this_byte=this_byte+1)
-				{
-					this_character = (char)read_buff[this_byte];
-					if((this_character < 32 ) || (this_character>127))
-					{
-						this_character='.';
-					}
-					printf("%c ", this_character);
-				}
-				printf(" ");
-				printf("\r\n");
-			}
-		}
-		f_close(&SDFile);
-	}
-	return result;
-}
-
-void recording_request_handler(){
-	if((SPI_buffer[6]<<8)+SPI_buffer[7] ==0){
-		sprintf(filename,"FILE%04d.DAT", ++current_max_filenumber);
-	}
-	else{
-		sprintf(filename,"FILE%04d.DAT", (SPI_buffer[6]<<8)+SPI_buffer[7]);
-	}
-	millisecs_to_record = (SPI_buffer[4]<<8)+SPI_buffer[5];
-	sampling_frequency_kHz = ((SPI_buffer[1]<<8)+SPI_buffer[2]);
-
-	printf("Record: Sampling %3dkHz  Gain %1d   Duration %lumS  %12s \r\n", sampling_frequency_kHz, SPI_buffer[3], millisecs_to_record,filename);
-
-
-	if(f_open(&SDFile, filename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)  //Open file for writing (Create)
-	{
-		printf("FAIL: Cannot open file for recording\r\n");
-	}
-	else
-	{
-		write_wav_header(sampling_frequency_kHz*1000,2*sampling_frequency_kHz*millisecs_to_record); 							// Write WAV Header Sampling at 786000 Hz
-		for(adcbuf_index=0;adcbuf_index < ADCBUFLEN;adcbuf_index++) // Clear ADC Buffer
-		{
-			adc_buf[adcbuf_index]=0;
-		}
-		total_blocks_written=0;
-		total_bytes_written=0;
-		adc_lower_status = BUFFER_EMPTY;
-		adc_upper_status = BUFFER_EMPTY;
-		overrun_count=0;
-		max_save_time_ms=0;
-		HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, GPIO_PIN_RESET);
-		set_ADC_clock_prescalar(sampling_frequency_kHz);
-		HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-		end_acq_ms=uwTick+millisecs_to_record;
-		do{
-			if(adc_lower_status == BUFFER_FULL)
-			{
-				start_time_ms=uwTick;
-				f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
-				ms_taken=uwTick-start_time_ms;
-				if(ms_taken > max_save_time_ms){
-					max_save_time_ms = ms_taken;
-				}
-				total_bytes_written = total_bytes_written+bytes_written;
-				adc_lower_status = BUFFER_EMPTY;
-				total_blocks_written++;
-				if(ADC_overrun){
-					HAL_ADC_Stop_DMA(&hadc1);
-					f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
-					total_bytes_written = total_bytes_written+bytes_written;
-					adc_upper_status = BUFFER_EMPTY;
-					total_blocks_written++;
-					ADC_overrun=0;
-					overrun_count++;
-					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-				}
-			}
-			if(adc_upper_status == BUFFER_FULL)
-			{
-				start_time_ms=uwTick;
-				f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
-				ms_taken=uwTick-start_time_ms;
-				if(ms_taken > max_save_time_ms){
-					max_save_time_ms = ms_taken;
-				}
-				total_bytes_written = total_bytes_written+bytes_written;
-				adc_upper_status = BUFFER_EMPTY;
-				total_blocks_written++;
-				if(ADC_overrun){
-					HAL_ADC_Stop_DMA(&hadc1);
-					f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
-					total_bytes_written = total_bytes_written+bytes_written;
-					adc_lower_status = BUFFER_EMPTY;
-					total_blocks_written++;
-					ADC_overrun=0;
-					overrun_count++;
-					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-				}
-			}
-		}
-		while(uwTick< end_acq_ms);
-		HAL_ADC_Stop_DMA(&hadc1);   								// Halt ADC DMA
-
-		// Now update WAV file with data length
-		f_lseek(&SDFile,0x28);
-		f_write(&SDFile,&total_bytes_written, 4, (void *)&bytes_written);
-
-		f_close(&SDFile);  											// Writing complete so close file
-		printf("Recording Complete.  Total Blocks Written %lu  Total Bytes Written %lu MaxSaveTime %d  Overruns %d\r\n",total_blocks_written,total_bytes_written,max_save_time_ms,overrun_count);
-
-		strcpy(fullfilename,"//");
-		strcat(fullfilename,filename);
-		HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);				/* Get the RTC current Date */
-		HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);				/* Display time Format: hh:mm:ss */
-		fno.fdate = (WORD)(((gDate.Year+20) * 512U) | gDate.Month * 32U | gDate.Date);
-		fno.ftime = (WORD)(gTime.Hours * 2048U | gTime.Minutes * 32U | gTime.Seconds / 2U);
-		result=f_utime(fullfilename, &fno);
-	}
-}
-
-void recording_request_handler2(){
-
-	millisecs_to_record = (SPI_buffer[4]<<8)+SPI_buffer[5];
-	sampling_frequency_kHz = ((SPI_buffer[1]<<8)+SPI_buffer[2]);
-
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
-	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, 40, 100);
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
-
-	printf("Record: Sampling %3dkHz  Gain %1d   Duration %lumS  %12s \r\n", sampling_frequency_kHz, SPI_buffer[3], millisecs_to_record,filename_buffer);
-
-
-	if(f_open(&SDFile, filename_buffer, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)  //Open file for writing (Create)
-	{
-		printf("FAIL: Cannot open file for recording\r\n");
-	}
-	else
-	{
-		write_wav_header(sampling_frequency_kHz*1000,2*sampling_frequency_kHz*millisecs_to_record); 							// Write WAV Header Sampling at 786000 Hz
-		for(adcbuf_index=0;adcbuf_index < ADCBUFLEN;adcbuf_index++) // Clear ADC Buffer
-		{
-			adc_buf[adcbuf_index]=0;
-		}
-		total_blocks_written=0;
-		total_bytes_written=0;
-		adc_lower_status = BUFFER_EMPTY;
-		adc_upper_status = BUFFER_EMPTY;
-		overrun_count=0;
-		max_save_time_ms=0;
-		HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, GPIO_PIN_RESET);
-		set_ADC_clock_prescalar(sampling_frequency_kHz);
-		HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-		end_acq_ms=uwTick+millisecs_to_record;
-		do{
-			if(adc_lower_status == BUFFER_FULL)
-			{
-				start_time_ms=uwTick;
-				f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
-				ms_taken=uwTick-start_time_ms;
-				if(ms_taken > max_save_time_ms){
-					max_save_time_ms = ms_taken;
-				}
-				total_bytes_written = total_bytes_written+bytes_written;
-				adc_lower_status = BUFFER_EMPTY;
-				total_blocks_written++;
-				if(ADC_overrun){
-					HAL_ADC_Stop_DMA(&hadc1);
-					f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
-					total_bytes_written = total_bytes_written+bytes_written;
-					adc_upper_status = BUFFER_EMPTY;
-					total_blocks_written++;
-					ADC_overrun=0;
-					overrun_count++;
-					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-				}
-			}
-			if(adc_upper_status == BUFFER_FULL)
-			{
-				start_time_ms=uwTick;
-				f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
-				ms_taken=uwTick-start_time_ms;
-				if(ms_taken > max_save_time_ms){
-					max_save_time_ms = ms_taken;
-				}
-				total_bytes_written = total_bytes_written+bytes_written;
-				adc_upper_status = BUFFER_EMPTY;
-				total_blocks_written++;
-				if(ADC_overrun){
-					HAL_ADC_Stop_DMA(&hadc1);
-					f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
-					total_bytes_written = total_bytes_written+bytes_written;
-					adc_lower_status = BUFFER_EMPTY;
-					total_blocks_written++;
-					ADC_overrun=0;
-					overrun_count++;
-					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
-				}
-			}
-		}
-		while(uwTick< end_acq_ms);
-		HAL_ADC_Stop_DMA(&hadc1);   								// Halt ADC DMA
-
-		// Now update WAV file with data length
-		f_lseek(&SDFile,0x28);
-		f_write(&SDFile,&total_bytes_written, 4, (void *)&bytes_written);
-
-		f_close(&SDFile);  											// Writing complete so close file
-		printf("Recording Complete.  Total Blocks Written %lu  Total Bytes Written %lu MaxSaveTime %d  Overruns %d\r\n",total_blocks_written,total_bytes_written,max_save_time_ms,overrun_count);
-
-		strcpy(fullfilename,"//");
-		strcat(fullfilename,filename_buffer);
-		HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);				/* Get the RTC current Date */
-		HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);				/* Display time Format: hh:mm:ss */
-		fno.fdate = (WORD)(((gDate.Year+20) * 512U) | gDate.Month * 32U | gDate.Date);
-		fno.ftime = (WORD)(gTime.Hours * 2048U | gTime.Minutes * 32U | gTime.Seconds / 2U);
-		result=f_utime(fullfilename, &fno);
-	}
-}
-
-
-void delete_file_handler(){
-
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
-	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, 40, 100);
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
-
-	printf("deleting file %s\r\n", filename_buffer);
-	if(f_unlink(filename_buffer) != FR_OK)  				//delete file
-	{
-		printf("FAIL: Cannot delete file\r\n");
-	}
-	else{
-		printf("%s Deleted\r\n",filename_buffer);
-	}
-//	current_max_filenumber=0;
-//	strcpy(full_path_name, "/");
-//	scan_for_latest_file(full_path_name);
-}
-
-void file_transfer_request_handler(){
-	if(SPI_buffer[1]+SPI_buffer[2]==0)
-	{
-		sprintf(filenametosave,"FILE%04d.DAT", current_max_filenumber);
-	}
-	else
-	{
-		sprintf(filenametosave,"FILE%04d.DAT", (SPI_buffer[1]<<8)+SPI_buffer[2]);
-	}
-
-	printf("opening file %s to upload\r\n", filenametosave);
-	if(f_open(&SDFile, filenametosave, FA_READ) != FR_OK)  				//Open file for reading and uploading
-	{
-		printf("FAIL: Cannot open file for reading uploading\r\n");
-	}
-	else
-	{
-		SPI_Buffer[0]=f_size(&SDFile);
-		SPI_Buffer[1]=f_size(&SDFile)>>16;
-		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
-		HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 4, 5000);
-		file_byte_count=0;
-		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
-
-		while(!f_eof(&SDFile)){
-			result = f_read(&SDFile, SPI_Buffer,2 , (void *)&bytes_read);
-			file_byte_count++;
-			SPI_Buffer[0]= filereadint;
-			HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
-			HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 2, 50);
-			HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
-		}
-	}
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are busy
-	printf("%s Uploaded\r\n",filenametosave);
-	f_close(&SDFile);
-}
-
-void save_request_handler(){
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
-	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, 40, 100);
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
-
-	printf("opening file %s to upload\r\n", filename_buffer);
-	if(f_open(&SDFile, filename_buffer, FA_READ) != FR_OK)  				//Open file for reading and uploading
-	{
-		printf("FAIL: Cannot open file for reading uploading\r\n");
-	}
-	else
-	{
-		SPI_Buffer[0]=f_size(&SDFile);
-		SPI_Buffer[1]=f_size(&SDFile)>>16;
-		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
-		HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 4, 5000);
-		file_byte_count=0;
-		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
-		while(!f_eof(&SDFile)){
-			result = f_read(&SDFile, &filereadint,2 , (void *)&bytes_read);
-			if((bytes_read == 0) || (result != FR_OK))
-			{
-				printf("FAIL: Cannot read file to save upload\r\n");
-			}
-			else
-			{
-				file_byte_count++;
-				filevalue=filereadint;
-				if(file_byte_count>sizeof(wavfile_header_t)){
-					filevalue = filereadint-32768;
-					//filevalue = filereadint;
-				}
-
-				SPI_Buffer[0]= filevalue;
-//				printf("%x %x %d\r\n",file_byte_count, filereadint, filereadint);
-//				if(file_byte_count>200){
-//					for(;;);
-//				}
-				HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
-				HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 2, 5000);
-				HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
-			}
-		}
-	}
-	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are busy
-	printf("%s Uploaded\r\n",filename_buffer);
-	f_close(&SDFile);
-}
-
 void datetime_request_handler(){
 	RTC_TimeTypeDef sTime;
 	RTC_DateTypeDef sDate;
@@ -1351,100 +909,196 @@ void datetime_request_handler(){
 	printf("DateTime Set Complete\r\n");
 }
 
+void save_request_handler(){
+	int filename_byte_length;
 
-void directory_request_handler()
-{
-	HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);				/* Get the RTC current Date */
-	HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);				/* Display time Format: hh:mm:ss */
-	printf("RTC Date Time  %02d:%02d:%02d  %02d-%02d-%2d\r\n",gTime.Hours, gTime.Minutes, gTime.Seconds,gDate.Month,gDate.Date,2000 + gDate.Year);				/* Display date Format: dd-mm-yy */
+	// Now read the number of bytes needed for the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)SPI_buffer, 2, 2000);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+	filename_byte_length = (SPI_buffer[0]<<8) + (SPI_buffer[1]);
 
-	/* allocate memory for directory listing */
-	SD_Directory2 = malloc( 100 * directory_lines++ );
-	if( SD_Directory2 == NULL ) {
-		printf("PANIC: unable to allocate required memory\r\n");
+	// now read the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, filename_byte_length, 2000);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+
+	printf("opening file %s to upload\r\n", filename_buffer);
+	if(f_open(&SDFile, filename_buffer, FA_READ) != FR_OK)  				//Open file for reading and uploading
+	{
+		printf("FAIL: Cannot open file for reading uploading\r\n");
 	}
-	/* Get volume information and free clusters of drive 1 */
-	result = f_getfree("0:", &fre_clust, &fs);
-	if (result!= FR_OK){
-		printf("PANIC: unable to determine free space on SD\r\n");
-	}
-	/* Get total sectors and free sectors */
-	tot_sect = (fs->n_fatent - 2) * fs->csize;
-	fre_sect = fre_clust * fs->csize;
-	/* Print free space in unit of KB (assuming 512 bytes/sector) */
-	sprintf(SD_space_description,"%lu KB total drive space.     %lu KB available.\r\n",tot_sect / 2, fre_sect / 2);
-	strcpy( SD_Directory2, SD_space_description);
-
-	/* Get directory contents */
-	strcpy(full_path_name, "/");
-//	directory_lines=5;
-	result= get_SD_directory(full_path_name);
-	printf("%s", SD_Directory2);
-	strcat( SD_Directory2, "\f");
-
-	/* Send directory content to raspi */
-	int buffer_index=0;
-	do {
-		SPI_Buffer[0]=SD_Directory2[buffer_index];
+	else
+	{
+		SPI_Buffer[0]=f_size(&SDFile);
+		SPI_Buffer[1]=f_size(&SDFile)>>16;
 		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
-		HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 1, 5000);
-		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are busy
-	}
-	while(SD_Directory2[buffer_index++] != 12);
+		HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 4, 5000);
+		file_byte_count=0;
+		HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
 
-	printf("Directory Uploaded\r\n");
-	free(SD_Directory2);
-}
+		file_byte_count=0;
+		while(!f_eof(&SDFile)){
+			result = f_read(&SDFile, &filereadint,2 , (void *)&bytes_read);
+			if((bytes_read == 0) || (result != FR_OK))
+			{
+				printf("FAIL: Cannot read file to save upload\r\n");
+			}
+			else
+			{
+				file_byte_count++;
+				filevalue=filereadint;
+				if(file_byte_count>sizeof(wavfile_header_t)){
+					filevalue = filereadint-32768;
+				}
 
-void set_ADC_clock_prescalar(int sampling_fr){
-	ADC_MultiModeTypeDef multimode = {0};
-	switch(sampling_fr){
-	case 800:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV4;
-		break;
-	case 533:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV6;
-		break;
-	case 400:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV8;
-		break;
-	case 320:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV10;
-		break;
-	case 266:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV12;
-		break;
-	case 200:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV16;
-		break;
-	case 100:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV32;
-		break;
-	case 50:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV64;
-		break;
-	case 25:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV128;
-		break;
-	case 12:
-		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV256;
-		break;
-	}
-	if (HAL_ADC_Init(&hadc1) != HAL_OK)
-	{
-		Error_Handler();
-	}
+				SPI_Buffer[0]= filevalue;
 
-	/** Configure the ADC multi-mode
-	 */
-	multimode.Mode = ADC_MODE_INDEPENDENT;
-	if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
-	{
-		Error_Handler();
+				HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell RASPI we are Ready
+				HAL_SPI_Transmit(&hspi6, (uint8_t *)SPI_Buffer, 2, 5000);
+				HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are Busy
+			}
+		}
 	}
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell RASPI we are busy
+	printf("%s Uploaded\r\n",filename_buffer);
+	f_close(&SDFile);
 
 }
 
+void delete_file_handler(){
+
+	int filename_byte_length;
+
+	// Now read the number of bytes needed for the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)SPI_buffer, 2, 2000);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+	filename_byte_length = (SPI_buffer[0]<<8) + (SPI_buffer[1]);
+
+	// now read the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, filename_byte_length, 2000);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+
+	printf("deleting file %s  %d\r\n", filename_buffer,filename_byte_length);
+	if(f_unlink(filename_buffer) != FR_OK)  				//delete file
+	{
+		printf("FAIL: Cannot delete file\r\n");
+	}
+	else{
+		printf("%s Deleted\r\n",filename_buffer);
+	}
+}
+
+
+void recording_request_handler2(){
+
+	millisecs_to_record = (SPI_buffer[4]<<8)+SPI_buffer[5];
+	sampling_frequency_kHz = ((SPI_buffer[1]<<8)+SPI_buffer[2]);
+
+	int filename_byte_length;
+
+	// Now read the number of bytes needed for the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)SPI_buffer, 2, 100);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+	filename_byte_length = (SPI_buffer[0]<<8) + (SPI_buffer[1]);
+
+	// now read the filename
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_RESET);  // Tell the RASPI we are Ready for the filename
+	HAL_SPI_Receive(&hspi6, (uint8_t *)filename_buffer, filename_byte_length, 1000);
+	HAL_GPIO_WritePin(Acq_Busy_GPIO_Port, Acq_Busy_Pin, GPIO_PIN_SET);  // Tell the RASPI we are Busy
+
+	printf("Record: Sampling %3dkHz  Gain %1d   Duration %lumS  %s \r\n", sampling_frequency_kHz, SPI_buffer[3], millisecs_to_record,filename_buffer);
+
+	if(f_open(&SDFile, filename_buffer, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)  //Open file for writing (Create)
+	{
+		printf("FAIL: Cannot open file for recording\r\n");
+	}
+	else
+	{
+		write_wav_header(sampling_frequency_kHz*1000,sampling_frequency_kHz*millisecs_to_record); 							// Write WAV Header Sampling at 786000 Hz
+		for(adcbuf_index=0;adcbuf_index < ADCBUFLEN;adcbuf_index++) // Clear ADC Buffer
+		{
+			adc_buf[adcbuf_index]=0;
+		}
+		total_blocks_written=0;
+		total_bytes_written=0;
+		adc_lower_status = BUFFER_EMPTY;
+		adc_upper_status = BUFFER_EMPTY;
+		overrun_count=0;
+		max_save_time_ms=0;
+		HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, GPIO_PIN_RESET);
+		set_ADC_clock_prescalar(sampling_frequency_kHz);
+		HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
+		end_acq_ms=uwTick+millisecs_to_record;
+		do{
+			if(adc_lower_status == BUFFER_FULL)
+			{
+				start_time_ms=uwTick;
+				f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
+				ms_taken=uwTick-start_time_ms;
+				if(ms_taken > max_save_time_ms){
+					max_save_time_ms = ms_taken;
+				}
+				total_bytes_written = total_bytes_written+bytes_written;
+				adc_lower_status = BUFFER_EMPTY;
+				total_blocks_written++;
+				if(ADC_overrun){
+					HAL_ADC_Stop_DMA(&hadc1);
+					f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
+					total_bytes_written = total_bytes_written+bytes_written;
+					adc_upper_status = BUFFER_EMPTY;
+					total_blocks_written++;
+					ADC_overrun=0;
+					overrun_count++;
+					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
+				}
+			}
+			if(adc_upper_status == BUFFER_FULL)
+			{
+				start_time_ms=uwTick;
+				f_write(&SDFile, &adc_buf[ADCBUFLEN/2], ADCBUFLEN, (void *)&bytes_written);
+				ms_taken=uwTick-start_time_ms;
+				if(ms_taken > max_save_time_ms){
+					max_save_time_ms = ms_taken;
+				}
+				total_bytes_written = total_bytes_written+bytes_written;
+				adc_upper_status = BUFFER_EMPTY;
+				total_blocks_written++;
+				if(ADC_overrun){
+					HAL_ADC_Stop_DMA(&hadc1);
+					f_write(&SDFile, &adc_buf[0], ADCBUFLEN, (void *)&bytes_written);
+					total_bytes_written = total_bytes_written+bytes_written;
+					adc_lower_status = BUFFER_EMPTY;
+					total_blocks_written++;
+					ADC_overrun=0;
+					overrun_count++;
+					HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADCBUFLEN); 	// Enable ADC DMA and add contents
+				}
+			}
+		}
+		while(uwTick< end_acq_ms);
+		HAL_ADC_Stop_DMA(&hadc1);   								// Halt ADC DMA
+
+		// Now update WAV file with data length
+		f_lseek(&SDFile,0x28);
+		f_write(&SDFile,&total_bytes_written, 4, (void *)&bytes_written);
+
+		f_close(&SDFile);  											// Writing complete so close file
+		printf("Total Blocks Written %lu  Total Bytes Written %lu MaxSaveTime %d  Overruns %d\r\n",total_blocks_written,total_bytes_written,max_save_time_ms,overrun_count);
+		printf("Recording Complete\r\n");
+
+		strcpy(fullfilename,"//");
+		strcat(fullfilename,filename_buffer);
+		HAL_RTC_GetTime(&hrtc, &gTime, RTC_FORMAT_BIN);				/* Get the RTC current Date */
+		HAL_RTC_GetDate(&hrtc, &gDate, RTC_FORMAT_BIN);				/* Display time Format: hh:mm:ss */
+		fno.fdate = (WORD)(((gDate.Year+20) * 512U) | gDate.Month * 32U | gDate.Date);
+		fno.ftime = (WORD)(gTime.Hours * 2048U | gTime.Minutes * 32U | gTime.Seconds / 2U);
+		result=f_utime(fullfilename, &fno);
+	}
+}
 
 /*
  * Function to write header of WAV file
@@ -1498,6 +1152,8 @@ int write_wav_header(int32_t SampleRate,int32_t FrameCount)
 	wav_header.Subchunk2ID[3] = 'a';
 	wav_header.Subchunk2Size = subchunk2_size;
 
+	printf("chunk_size %ld %lx\r\n", chunk_size,chunk_size);
+	printf("subchunk2_size %ld %lx\r\n", subchunk2_size,subchunk2_size);
 	//Open file for writing (Create)
 	result = f_write(&SDFile, &wav_header, sizeof(wavfile_header_t), (void *)&bytes_written);
 	if((bytes_written == 0) || (result != FR_OK))
@@ -1513,6 +1169,57 @@ int write_wav_header(int32_t SampleRate,int32_t FrameCount)
 	}
 	return ret;
 }
+
+void set_ADC_clock_prescalar(int sampling_fr){
+	ADC_MultiModeTypeDef multimode = {0};
+	switch(sampling_fr){
+	case 800:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV4;
+		break;
+	case 533:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV6;
+		break;
+	case 400:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV8;
+		break;
+	case 320:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV10;
+		break;
+	case 266:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV12;
+		break;
+	case 200:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV16;
+		break;
+	case 100:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV32;
+		break;
+	case 50:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV64;
+		break;
+	case 25:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV128;
+		break;
+	case 12:
+		hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV256;
+		break;
+	}
+	if (HAL_ADC_Init(&hadc1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Configure the ADC multi-mode
+	 */
+	multimode.Mode = ADC_MODE_INDEPENDENT;
+	if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+}
+
+
 
 /* USER CODE END 4 */
 
