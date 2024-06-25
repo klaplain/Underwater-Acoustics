@@ -186,7 +186,7 @@ def record(samplingFreq, gain, duration,filePrefix):   # Code 9
     filename_bytes=bytes(this_filename, "utf8")
     print("Recording Start", this_filename)
     duration = int(duration)*1000
-    msg= [RECORD,((int(samplingFreq) >>8) & 0xff),(int(samplingFreq) & 0xff),int(gain),((int(duration) >>8) & 0xff),(int(duration) & 0xff),((int(0) >>8) & 0xff),(int(0) & 0xff)]
+    msg= [RECORD,((int(samplingFreq) >>8) & 0xff),(int(samplingFreq) & 0xff),int(gain)-1,((int(duration) >>8) & 0xff),(int(duration) & 0xff),((int(0) >>8) & 0xff),(int(0) & 0xff)]
     while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
     spi.writebytes(msg)
     # we have just sent the 8 byte packet.  Now we need to send the filename
@@ -221,7 +221,10 @@ def create_histogram(wavfilename):
     plt.xlabel("Time (secs)")
     # plt.show()
     print("H4")
+    if os.path.isfile("static/hist.png"):
+         os.remove("static/hist.png")
     plt.savefig("static/hist.png")
+    plt.close()
     return
 
 def analyze(filename):
