@@ -997,6 +997,9 @@ void recording_request_handler2(){
 	millisecs_to_record = (SPI_buffer[4]<<8)+SPI_buffer[5];
 	sampling_frequency_kHz = ((SPI_buffer[1]<<8)+SPI_buffer[2]);
 
+	HAL_GPIO_WritePin(GPIOC, GAINA0_Pin, SPI_buffer[3] & 0xFF);
+	HAL_GPIO_WritePin(GPIOC, GAINA1_Pin, SPI_buffer[3]>>1 & 0xFF);
+
 	int filename_byte_length;
 
 	// Now read the number of bytes needed for the filename
