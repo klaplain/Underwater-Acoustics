@@ -120,7 +120,7 @@
       <div class="form-group">
         <label for="file">Acquisition File</label>
         <select class="form-control" id="file" name="file">
-          {% for fileItem in directory_list[1:] %}
+          {% for fileItem in directory_list %}
           <option>{{fileItem}}</option>
           {% endfor %}
         </select>
