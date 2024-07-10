@@ -4,204 +4,146 @@ import spidev
 import RPi.GPIO as GPIO
 import os
 
-# for data transformation
-import numpy as np
-# for visualizing the data
-import matplotlib.pyplot as plt
-# for opening the media file
-import scipy.io.wavfile as wavfile
-# Importing libraries using import keyword.
-import math
+import numpy as np                                                      # for data transformation
+import matplotlib.pyplot as plt                                         # for visualizing the data
+import scipy.io.wavfile as wavfile                                      # for opening the media file
+import math                                                             # Importing libraries using import keyword.
 
-# SPI Command IDs for Acquisition Subsystem
-DIRECTORY = 2
-DATETIME = 3
-LOCATION =4
-TRANSFER = 5
-FORMAT = 6
-DELETE = 7
-RECORD = 9
-
-# Set defaults for global variables
-fourbytestoread=[0,0,0,0]
-twobytestoread=[0,0]
-onebytetoread=[0]
-AcqSubSystemReady = "Busy"
 directory_listing =""
 samplingFreq_default="200"
 gain_default ="2"
 duration_default ="2"
 filePrefix_default = "SS"
 
+BUFFER_SIZE = 4096
+filetransferbuffer = [0]*BUFFER_SIZE
+SD_Card_file_size_dict = {}                                             # Initialise/Empty dictionary.  We will need this dictionary for the SD card files later.
+
 # Initialize SPI interface
-bus = 0  # We only have SPI bus 0 available to us on the Pi
-device = 0 #Device is the chip select pin. Set to 0 or 1, depending on the connections
-spi = spidev.SpiDev() # Enable SPI
-spi.open(bus, device) # Open a connection to a specific bus and device (chip select pin)
-spi.max_speed_hz = 1000000  # Set SPI speed and mode
+bus = 0                                                                 # We only have SPI bus 0 available to us on the Pi
+device = 0                                                              # Device is the chip select pin. Set to 0 or 1, depending on the connections
+spi = spidev.SpiDev()                                                   # Enable SPI SD_Card_file_size_dict = {}
+spi.open(bus, device)                                                   # Open a connection to a specific bus and device (chip select pin)
+spi.max_speed_hz = 12000000                                             # Set SPI speed and mode  2700000 seems to be the maximum stable value.  2.7MHz clock => 337kBytes/sec theoretical
 spi.mode = 0
+spi.no_cs = True
 
-def initialize():
-    print("Initializing")
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
-    GPIO.setup(22, GPIO.OUT) # Reset STM32
-    GPIO.output(22, GPIO.LOW)
-    time.sleep(0.5)
-    GPIO.output(22, GPIO.HIGH) #now release RESET pin
+def show_buffer(buffer):
+    for buffer_index in range(0,BUFFER_SIZE,16):
+        this_row=buffer[buffer_index:buffer_index+16]
+        row_count=int(buffer_index/16)
+        print(f"{row_count*16:0{4}x}", end = " ")
+        for thisbyte in range(16):
+            print(f"{this_row[thisbyte]:0{2}x}", end = " ")
+        print("   ", end=" ")
+        for thisbyte in range(16):
+            printbyte = this_row[thisbyte]
+            if printbyte <32 or printbyte>122:
+                printbyte=46
+            print(chr(printbyte), end = "")
+        print()
+    return
 
-    GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP) # STM32 SPI Busy
-    set_datetime()
-    time.sleep(0.5)  # need to give the STM32 a break
 
-def directory():  # Code 0
-    print("SD Directory")
-    msg= [DIRECTORY,0,DIRECTORY,0,DIRECTORY,0,DIRECTORY,0]
-    directory_listing=""
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready
-    spi.writebytes(msg)
+
+
+
+def stm_to_raspi():                                                     # Get a block of data from the STM32 into the RASPI
+    returned_values = [0]*BUFFER_SIZE
     while True:
-        while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready
-        spi.xfer(onebytetoread)
-        directory_listing=directory_listing+chr(onebytetoread[0])
-        if onebytetoread[0]==12:   #12 signifies the end of the directory listing
+        while GPIO.input(27) == GPIO.HIGH  :  pass                      # Wait until STM ACQ is Ready before requesting datablock
+        returned_values = spi.readbytes(BUFFER_SIZE)
+        #show_buffer(returned_values)
+        return returned_values
+
+def raspi_to_stm(datablock):                                            # Send a block of data from the RASPI to the STM32
+    while GPIO.input(27) == GPIO.HIGH  :  pass                          # Wait until STM ACQ is Ready before sending datablock
+    spi.writebytes(datablock)
+    while GPIO.input(27) == GPIO.HIGH  :  pass                          # Wait until STM ACQ is Ready before returning
+    return
+
+def send_command_to_stm(command_string):
+    print(command_string)
+    command=bytearray()
+    command.extend(command_string.encode())
+    command.extend([0]*(BUFFER_SIZE-len(command)))
+    raspi_to_stm(command)
+
+def directory():
+    global SD_Card_file_size_dict
+    send_command_to_stm(">DIR")
+    returned_directory = stm_to_raspi()                                 #get the directory data from STM32
+
+    directory_string = ""
+    for character in returned_directory:
+        if character == 12:
             break
-    directory_list = directory_listing.split(chr(10))
-    #print(directory_listing)
+        directory_string += chr(character)                              # and put it all into a string
 
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
-    print("End of Directory")
-    return directory_list
+    directory_line = directory_string.replace("//","").split("\n")      # strip out // and break down into separate lines
+    SD_status = directory_line[0]                                       # first line describes disk status / usage  - maybe this should be displayed separately
+    SD_Card_file_size_dict.clear()                                      # Empty dictionary.  We will need this dictionary for the SD card files later.
 
-def set_datetime(): # Function to set date and time on Acquisition Subsystem Code 3
+    for index in range(1,len(directory_line)):                        # each of the next lines describes a file except for the last 3 lines
+        directory_line_items = directory_line[index].split("\t")            # now split out the filename, size, date and time
+        if directory_line_items[0].find(".DAT")>0:
+            SD_Card_file_size_dict[directory_line_items[0]] = int(directory_line_items[1] )
+    return directory_line
+
+def set_datetime():                                                     # Function to set date and time on Acquisition Subsystem
     print("Set datetime")
     now=datetime.datetime.now()
-    msg= [DATETIME,now.hour,now.minute,now.second,4,now.month,now.day,now.year-2000]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    send_command_to_stm(f">TIM,{now.hour},{now.minute},{now.second},4,{now.month},{now.day},{now.year-2000}")
     return
 
-def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):   # Code 5 - TRANSFER
-    this_filename =file.split(" ")[0][2:]
-    filename_bytes=bytes(this_filename, "utf8")
-    print("Transfer to Pi",this_filename)
-    msg= [TRANSFER,0,0,0,0,0,0,0]
+def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Function to transfer file from STM32 to RASPI
+    global SD_Card_file_size_dict
+    this_filename =file.split(" ")[0]
+    print("Transfer",this_filename)
+    send_command_to_stm(f">XFR,{this_filename}")
 
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-
-    # we have just sent the 8 byte packet.
-    # Now we need to send length of filename as a 16 bit int
-
-    msg=[len(this_filename) >>8, len(this_filename)]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-
-    # now we send the filename
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data
-    spi.writebytes(filename_bytes)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
-
-    #open file for writing on RASPI.  We can do this to kill time before the AcqSystem is ready
-    f=open("./download/"+this_filename[:-3]+"WAV","wb")
+    f=open("./download/"+this_filename[:-3]+"WAV","wb")                 #open file for writing on RASPI.
     print("File opened", this_filename[:-3]+"WAV")
 
-    #Get bytecount
-    time.sleep(0.1) # give STM time to set the busy flag
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before requesting/reading bytecount
-    print("reading bytecount")
-    fourbytestoread=[0,0,0,0]
-    spi.xfer(fourbytestoread)
-    TotalBytes= (fourbytestoread[0])+(fourbytestoread[1]<<8)+(fourbytestoread[2]<<16)+(fourbytestoread[3]<<24)
-    TotalBytes = 1572908
+    TotalBytes= SD_Card_file_size_dict.get(this_filename)
     TotalInts=TotalBytes>>1
-    print("Bytes =", TotalBytes,"Ints =",TotalInts)
+    print("Samples =",TotalInts,"   Bytes =", TotalBytes)
+    bytestoread=TotalBytes
     tic = time.perf_counter()
-
-    #Get file data
-    for this_int in range(TotalInts):
-        while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading next word
-        spi.xfer(twobytestoread)
-        f.write(twobytestoread[0].to_bytes(1,'big'))
-        f.write(twobytestoread[1].to_bytes(1,'little'))
-    toc = time.perf_counter()
-    print(f"Time to save {toc - tic:0.4f} seconds")
-    f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
+    while True:
+        if bytestoread > BUFFER_SIZE:
+            f.write(bytearray(stm_to_raspi()))
+            #time.sleep(600)
+            bytestoread=bytestoread-BUFFER_SIZE
+        elif bytestoread == 0:
+            break
+        else:
+            f.write(bytearray(stm_to_raspi()[0:bytestoread]))           # we must have less than BUFFER_SIZE bytes so we need to truncate the bytearray
+            bytestoread = 0
+            f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
     f.close()
-    print("save done")
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
-    #while False : pass
+    toc = time.perf_counter()
+    print(f"Time to save {toc - tic:0.4f} seconds.      ",int(TotalBytes/(toc-tic))/1000000,"Mbytes per second" )
+    print("Transfer Complete")
     return
 
-def format():   # Code 6
+def format():                                                           # Function to format SD card on STM32
     print("Format SD")
-    msg= [FORMAT,0,FORMAT,0,FORMAT,0,FORMAT,0]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    send_command_to_stm(">FMT")
     print("Format Complete")
     return
 
-def delete(file):   # Code 7
-    this_filename =file.split(" ")[0][2:]
-    filename_bytes=bytes(this_filename, "utf8")
+def delete(file):                                                       # Function to delete file on STM32 SD card
+    this_filename =file.split(" ")[0]
     print("Delete",this_filename)
-    msg= [DELETE,0,0,0,0,0,0,0]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-
-    # we have just sent the 8 byte packet.  Now we need to send the filename
-    # first we need to send length of filename as a 16 bit int
-
-    msg=[len(this_filename) >>8, len(this_filename)]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-
-    # now we send the filename
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data
-    spi.writebytes(filename_bytes)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
-
+    send_command_to_stm(f">DEL,//{this_filename}")
     print("Deletion Complete")
     return
 
-def record(samplingFreq, gain, duration,filePrefix):   # Code 9
-    samplingFreq_default = samplingFreq
-    gain_default =  gain
-    duration_default = duration
-    filePrefix_default = filePrefix
+def record(samplingFreq, gain, duration,filePrefix):    # Function to record sound onto .DAT file on STM32 SD card
     print("Recording",samplingFreq, gain, duration,filePrefix)
-    #set_datetime()
     this_filename = filePrefix+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+".DAT"
-    filename_bytes=bytes(this_filename, "utf8")
-    print("Recording Start", this_filename)
-    duration = int(duration)*1000
-    msg= [RECORD,((int(samplingFreq) >>8) & 0xff),(int(samplingFreq) & 0xff),int(gain)-1,((int(duration) >>8) & 0xff),(int(duration) & 0xff),((int(0) >>8) & 0xff),(int(0) & 0xff)]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg)
-    # we have just sent the 8 byte packet.  Now we need to send the filename
-
-    # first we need to send length of filename as a 16 bit int
-    msg=[len(this_filename) >>8, len(this_filename)]
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before sending command
-    spi.writebytes(msg) # tell the STM ACQ how many bytes to expect
-
-    # now we send the filename
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before reading data (what on earth are we reading?
-    spi.writebytes(filename_bytes)
-    time.sleep(0.1) #Give STM ACQ time to set Busy
-    while GPIO.input(27) == GPIO.HIGH  :  pass # Wait until STM ACQ is Ready before returning
+    send_command_to_stm(f">REC,{samplingFreq}, {gain}, {duration},{this_filename}")
     print("Recording Complete")
     return
 
@@ -231,7 +173,7 @@ def analyze(filename):
     print("Analyze ","./download/"+filename)
     create_histogram("./download/"+filename)
 
-def createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain): # Function to create Subchunk3 meta data string
+def createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain):   # Function to create Subchunk3 meta data string
     INAM = pad_odd(hydrophoneArrayName)
     IPRD = pad_odd(projectName)
     IART = pad_odd("UW Acoustics Investigator")  # Placeholder
@@ -270,7 +212,7 @@ def createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain): # Function
 
     return SCK3
 
-def pad_odd(input_string):  # Function to ensure string is an odd number of characters long ready for use in WAV file meta data
+def pad_odd(input_string):                                              # Function to ensure string is an odd number of characters long ready for use in WAV file meta data
     if (len(input_string) % 2) == 0:
         return input_string + ' '
     else:
@@ -302,7 +244,6 @@ def home():
             directory()
         elif button == "transfer":
             transfer(request.form["file"],request.form["hydrophoneArrayName"],request.form["projectName"],request.form["lat"],request.form["long"],request.form["gain"])
-            print("transfer complete")
         elif button == "analyze":
             print("X ",request.form["wavfile"])
             analyze(request.form["wavfile"])
@@ -331,5 +272,21 @@ def home():
         return render_template("app.html", directory_list= directory_list,raspifile_list=raspifile_list, samplingFreq_default=samplingFreq_default,gain_default=gain_default,duration_default=duration_default,filePrefix_default=filePrefix_default)
 
 if __name__ == "__main__":
-    initialize()
+    print("Initializing")
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(22, GPIO.OUT)                                            # Reset STM32
+    GPIO.output(22, GPIO.LOW)
+    time.sleep(0.5)
+    GPIO.output(22, GPIO.HIGH)                                          #now release RESET pin
+
+    GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP)                   # STM32 SPI Busy
+
+    set_datetime()
+
+    directory_list = directory()
+    directory_list.sort(reverse=True)
+    raspifile_list = raspi_directory()
+    raspifile_list.sort(reverse=True)
+
     app.run(host='0.0.0.0',debug=True)
