@@ -251,7 +251,7 @@ def home():
     if request.method == "POST":
         button = request.form["button"]
         if button == "record":
-            record(request.form["samplingFreq"],request.form["gain"],request.form["duration"],request.form["filePrefix"])
+            record(request.form["samplingFreq"],request.form["gain"],str(request.form["duration"]),request.form["filePrefix"])
         elif button == "directory":
             directory()
         elif button == "transfer":
