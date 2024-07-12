@@ -10,10 +10,6 @@ import scipy.io.wavfile as wavfile                                      # for op
 import math                                                             # Importing libraries using import keyword.
 
 directory_listing =""
-samplingFreq_default="200"
-gain_default ="2"
-duration_default ="2"
-filePrefix_default = "SS"
 
 BUFFER_SIZE = 4096
 filetransferbuffer = [0]*BUFFER_SIZE
@@ -43,10 +39,6 @@ def show_buffer(buffer):
             print(chr(printbyte), end = "")
         print()
     return
-
-
-
-
 
 def stm_to_raspi():                                                     # Get a block of data from the STM32 into the RASPI
     returned_values = [0]*BUFFER_SIZE
@@ -84,11 +76,13 @@ def directory():
     SD_status = directory_line[0]                                       # first line describes disk status / usage  - maybe this should be displayed separately
     SD_Card_file_size_dict.clear()                                      # Empty dictionary.  We will need this dictionary for the SD card files later.
 
-    for index in range(1,len(directory_line)):                        # each of the next lines describes a file except for the last 3 lines
+    for index in range(1,len(directory_line)):                          # each of the next lines describes a file except for the last 3 lines
         directory_line_items = directory_line[index].split("\t")            # now split out the filename, size, date and time
         if directory_line_items[0].find(".DAT")>0:
             SD_Card_file_size_dict[directory_line_items[0]] = int(directory_line_items[1] )
-    return directory_line
+        else:
+            del directory_line[index]                                              # This isn't a valid file line
+    return directory_line[1:]                                           # Send the file directory but exclude the directory usage
 
 def set_datetime():                                                     # Function to set date and time on Acquisition Subsystem
     print("Set datetime")
@@ -103,17 +97,15 @@ def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Functi
     send_command_to_stm(f">XFR,{this_filename}")
 
     f=open("./download/"+this_filename[:-3]+"WAV","wb")                 #open file for writing on RASPI.
-    print("File opened", this_filename[:-3]+"WAV")
 
     TotalBytes= SD_Card_file_size_dict.get(this_filename)
     TotalInts=TotalBytes>>1
-    print("Samples =",TotalInts,"   Bytes =", TotalBytes)
+    print("Samples =",TotalInts," Bytes =", TotalBytes, end="")
     bytestoread=TotalBytes
     tic = time.perf_counter()
     while True:
         if bytestoread > BUFFER_SIZE:
             f.write(bytearray(stm_to_raspi()))
-            #time.sleep(600)
             bytestoread=bytestoread-BUFFER_SIZE
         elif bytestoread == 0:
             break
@@ -123,7 +115,7 @@ def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Functi
             f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
     f.close()
     toc = time.perf_counter()
-    print(f"Time to save {toc - tic:0.4f} seconds.      ",int(TotalBytes/(toc-tic))/1000000,"Mbytes per second" )
+    print(f"  Time to save {toc - tic:0.4f} secs.  ",int(TotalBytes/(toc-tic))/1000000,"Mbytes per sec" )
     print("Transfer Complete")
     return
 
@@ -140,7 +132,28 @@ def delete(file):                                                       # Functi
     print("Deletion Complete")
     return
 
+def deletewav(file):                                                       # Function to delete file on STM32 SD card
+    this_filename =file.split(" ")[0]
+    print("Delete",this_filename)
+    if os.path.exists("./download/"+this_filename[:-3]+"WAV"):
+            os.remove("./download/"+this_filename[:-3]+"WAV")                   #delete file
+    print("Deletion WAV file Complete")
+    return
+
+
 def record(samplingFreq, gain, duration,filePrefix):    # Function to record sound onto .DAT file on STM32 SD card
+
+    config_dict.update({"samplingFreq": samplingFreq})
+    config_dict.update({"gain": gain})
+    config_dict.update({"duration": duration})
+    config_dict.update({"filePrefix": filePrefix})
+    with open("config.cfg", "w") as config_file:
+        json.dump(config_dict, config_file)  # encode dict into JSON
+    samplingFreq_default=config_dict.get("samplingFreq")
+    gain_default=config_dict.get("gain")
+    duration_default=config_dict.get("duration")
+    filePrefix_default=config_dict.get("filePrefix")
+
     print("Recording",samplingFreq, gain, duration,filePrefix)
     this_filename = filePrefix+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+".DAT"
     send_command_to_stm(f">REC,{samplingFreq}, {gain}, {duration},{this_filename}")
@@ -249,10 +262,12 @@ def home():
             analyze(request.form["wavfile"])
         elif button == "download":
             print("Download ", request.form["wavfile"])
-            print(url_for('download',filename=request.form["wavfile"]))
+            #print(url_for('download',filename=request.form["wavfile"]))
             return redirect(url_for('download',filename=request.form["wavfile"]))
         elif button == "delete":
             delete(request.form["file"])
+        elif button == "deletewav":
+            deletewav(request.form["wavfile"])
         elif button == "formatSD":
             format()
         else:
@@ -262,12 +277,22 @@ def home():
         raspifile_list = raspi_directory()
         raspifile_list.sort(reverse=True)
 
+        samplingFreq_default=config_dict.get("samplingFreq")
+        gain_default=config_dict.get("gain")
+        duration_default=config_dict.get("duration")
+        filePrefix_default=config_dict.get("filePrefix")
+
         return redirect(url_for("home"))
     else:
         directory_list = directory()
         directory_list.sort(reverse=True)
         raspifile_list = raspi_directory()
         raspifile_list.sort(reverse=True)
+
+        samplingFreq_default=config_dict.get("samplingFreq")
+        gain_default=config_dict.get("gain")
+        duration_default=config_dict.get("duration")
+        filePrefix_default=config_dict.get("filePrefix")
 
         return render_template("app.html", directory_list= directory_list,raspifile_list=raspifile_list, samplingFreq_default=samplingFreq_default,gain_default=gain_default,duration_default=duration_default,filePrefix_default=filePrefix_default)
 
@@ -283,6 +308,14 @@ if __name__ == "__main__":
     GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP)                   # STM32 SPI Busy
 
     set_datetime()
+
+# Read config file to get last used settings for slections and drop downs
+    with open("config.cfg", "r") as config_file:# Load the dictionary from the file
+        config_dict = json.load(config_file)# Set defaults for global variables
+    samplingFreq_default=config_dict.get("samplingFreq")
+    gain_default=config_dict.get("gain")
+    duration_default=config_dict.get("duration")
+    filePrefix_default=config_dict.get("filePrefix")
 
     directory_list = directory()
     directory_list.sort(reverse=True)
