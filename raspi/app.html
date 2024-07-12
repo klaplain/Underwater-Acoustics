@@ -26,6 +26,7 @@
           <div class="form-group">
             <label for="samplingFreq">Sample Freq (kHz)</label>
             <select class="form-control" id="samplingFreq" value=samplingFreq name="samplingFreq">
+                          <option>{{samplingFreq_default}}</option>
               <option>800</option>
               <option>533</option>
               <option>400</option>
@@ -44,6 +45,7 @@
           <div class="form-group">
             <label for="gain">Gain</label>
             <select class="form-control" id="gain" placeholder=gain value=gain name="gain">
+              <option>{{gain_default}}</option>
               <option>1</option>
               <option>2</option>
               <option>3</option>
@@ -55,14 +57,14 @@
         <div class="col-sm">
           <div class="form-group">
             <label for="duration">Duration (secs)</label>
-            <input type="text" class="form-control" id="duration" placeholder=1 value=1 name="duration">
+            <input type="text" class="form-control" id="duration" placeholder=1 value={{duration_default}} name="duration">
           </div>
         </div>
 
         <div class="col-sm">
           <div class="form-group">
             <label for="filePrefix">File Prefix</label>
-            <input type="text" class="form-control" id="filePrefix" placeholder="SS" value="SS" name="filePrefix">
+            <input type="text" class="form-control" id="filePrefix" placeholder="SS" value={{filePrefix_default}} name="filePrefix">
           </div>
         </div>
 
@@ -120,7 +122,7 @@
       <div class="form-group">
         <label for="file">Acquisition File</label>
         <select class="form-control" id="file" name="file">
-          {% for fileItem in directory_list %}
+          {% for fileItem in directory_list%}
           <option>{{fileItem}}</option>
           {% endfor %}
         </select>
