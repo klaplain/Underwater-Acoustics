@@ -14,6 +14,7 @@ directory_listing =""
 BUFFER_SIZE = 4096
 filetransferbuffer = [0]*BUFFER_SIZE
 SD_Card_file_size_dict = {}                                             # Initialise/Empty dictionary.  We will need this dictionary for the SD card files later.
+SD_status = ""                                                          # SD Card usage
 
 # Initialize SPI interface
 bus = 0                                                                 # We only have SPI bus 0 available to us on the Pi
@@ -62,7 +63,7 @@ def send_command_to_stm(command_string):
     raspi_to_stm(command)
 
 def directory():
-    global SD_Card_file_size_dict
+    global SD_Card_file_size_dict, SD_status
     send_command_to_stm(">DIR")
     returned_directory = stm_to_raspi()                                 #get the directory data from STM32
 
@@ -82,7 +83,8 @@ def directory():
             SD_Card_file_size_dict[directory_line_items[0]] = int(directory_line_items[1] )
         else:
             del directory_line[index]                                              # This isn't a valid file line
-    return directory_line[1:]                                           # Send the file directory but exclude the directory usage
+    directory_line.sort(reverse=True)
+    return directory_line[:-1]                                           # Send the file directory but exclude the directory usage
 
 def set_datetime():                                                     # Function to set date and time on Acquisition Subsystem
     print("Set datetime")
@@ -149,10 +151,6 @@ def record(samplingFreq, gain, duration,filePrefix):    # Function to record sou
     config_dict.update({"filePrefix": filePrefix})
     with open("config.cfg", "w") as config_file:
         json.dump(config_dict, config_file)  # encode dict into JSON
-    samplingFreq_default=config_dict.get("samplingFreq")
-    gain_default=config_dict.get("gain")
-    duration_default=config_dict.get("duration")
-    filePrefix_default=config_dict.get("filePrefix")
 
     print("Recording",samplingFreq, gain, duration,filePrefix)
     this_filename = filePrefix+datetime.datetime.now().strftime("%Y%m%d%H%M%S")+".DAT"
@@ -237,6 +235,7 @@ def raspi_directory():
     for file in dir_list:
         if (file[-3:]== "WAV"):
             wav_list.append(file)
+    wav_list.sort(reverse=True)
     return wav_list
 
 app = Flask(__name__)
@@ -262,7 +261,6 @@ def home():
             analyze(request.form["wavfile"])
         elif button == "download":
             print("Download ", request.form["wavfile"])
-            #print(url_for('download',filename=request.form["wavfile"]))
             return redirect(url_for('download',filename=request.form["wavfile"]))
         elif button == "delete":
             delete(request.form["file"])
@@ -273,28 +271,14 @@ def home():
         else:
             print("Do nothing")
         directory_list = directory()
-        directory_list.sort(reverse=True)
         raspifile_list = raspi_directory()
-        raspifile_list.sort(reverse=True)
-
-        samplingFreq_default=config_dict.get("samplingFreq")
-        gain_default=config_dict.get("gain")
-        duration_default=config_dict.get("duration")
-        filePrefix_default=config_dict.get("filePrefix")
 
         return redirect(url_for("home"))
     else:
         directory_list = directory()
-        directory_list.sort(reverse=True)
         raspifile_list = raspi_directory()
-        raspifile_list.sort(reverse=True)
 
-        samplingFreq_default=config_dict.get("samplingFreq")
-        gain_default=config_dict.get("gain")
-        duration_default=config_dict.get("duration")
-        filePrefix_default=config_dict.get("filePrefix")
-
-        return render_template("app.html", directory_list= directory_list,raspifile_list=raspifile_list, samplingFreq_default=samplingFreq_default,gain_default=gain_default,duration_default=duration_default,filePrefix_default=filePrefix_default)
+        return render_template("app.html", SD_status=SD_status, directory_list=directory_list,raspifile_list=raspifile_list, samplingFreq=config_dict.get("samplingFreq"),gain=config_dict.get("gain")  ,duration=config_dict.get("duration"),filePrefix=config_dict.get("filePrefix") )
 
 if __name__ == "__main__":
     print("Initializing")
@@ -312,14 +296,8 @@ if __name__ == "__main__":
 # Read config file to get last used settings for slections and drop downs
     with open("config.cfg", "r") as config_file:# Load the dictionary from the file
         config_dict = json.load(config_file)# Set defaults for global variables
-    samplingFreq_default=config_dict.get("samplingFreq")
-    gain_default=config_dict.get("gain")
-    duration_default=config_dict.get("duration")
-    filePrefix_default=config_dict.get("filePrefix")
 
     directory_list = directory()
-    directory_list.sort(reverse=True)
     raspifile_list = raspi_directory()
-    raspifile_list.sort(reverse=True)
 
     app.run(host='0.0.0.0',debug=True)
