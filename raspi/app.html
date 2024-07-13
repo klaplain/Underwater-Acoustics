@@ -26,7 +26,7 @@
           <div class="form-group">
             <label for="samplingFreq">Sample Freq (kHz)</label>
             <select class="form-control" id="samplingFreq" value=samplingFreq name="samplingFreq">
-                          <option>{{samplingFreq_default}}</option>
+                          <option>{{samplingFreq}}</option>
               <option>800</option>
               <option>533</option>
               <option>400</option>
@@ -45,7 +45,7 @@
           <div class="form-group">
             <label for="gain">Gain</label>
             <select class="form-control" id="gain" placeholder=gain value=gain name="gain">
-              <option>{{gain_default}}</option>
+              <option>{{gain}}</option>
               <option>1</option>
               <option>2</option>
               <option>3</option>
@@ -57,14 +57,14 @@
         <div class="col-sm">
           <div class="form-group">
             <label for="duration">Duration (secs)</label>
-            <input type="number" min="1" step="1" class="form-control" id="duration" placeholder=1 value={{duration_default}} name="duration">
+            <input type="number" min="1" step="1" class="form-control" id="duration" placeholder=1 value={{duration}} name="duration">
           </div>
         </div>
 
         <div class="col-sm">
           <div class="form-group">
             <label for="filePrefix">File Prefix</label>
-            <input type="text" class="form-control" id="filePrefix" placeholder="SS" value={{filePrefix_default}} name="filePrefix">
+            <input type="text" class="form-control" id="filePrefix" placeholder="SS" value={{filePrefix}} name="filePrefix">
           </div>
         </div>
 
@@ -83,15 +83,14 @@
           <div class="form-group">
             <label for="hydrophoneArrayName">Hydrophone Array Name</label>
             <input type="text" class="form-control" id="hydrophoneArrayName" placeholder="BARN Hydrophone 1"
-              value="BARN Hydrophone 1" name="hydrophoneArrayName">
+              value={{hydrophoneArrayName}} name="hydrophoneArrayName">
           </div>
         </div>
 
         <div class="col-sm">
           <div class="form-group">
             <label for="projectName">Project Name</label>
-            <input type="text" class="form-control" id="projectName" placeholder="Barn Project 1" value="Barn Project 1"
-              name="projectName">
+            <input type="text" class="form-control" id="projectName" placeholder="Barn Project 1" value={{projectName}} name="projectName">
           </div>
         </div>
 
@@ -103,14 +102,14 @@
         <div class="col-sm">
           <div class="form-group">
             <label for="lat">Latitude</label>
-            <input type="text" class="form-control" id="lat" placeholder="47.64432" value="47.64432" name="lat">
+            <input type="text" class="form-control" id="lat" placeholder="47.64432" value={{lat}} name="lat">
           </div>
         </div>
 
         <div class="col-sm">
           <div class="form-group">
             <label for="long">Longitude</label>
-            <input type="text" class="form-control" id="long" placeholder="-122.52250" value="-122.52250" name="long">
+            <input type="text" class="form-control" id="long" placeholder="-122.52250" value={{long}} name="long">
           </div>
         </div>
 
@@ -128,6 +127,11 @@
         </select>
       </div>
     </div>
+
+    <div class="container">
+             <p>{{SD_status}}</p>
+    </div>
+
 
     <div class="container">
       <div class="form-group">
