@@ -4,7 +4,9 @@ import spidev
 import RPi.GPIO as GPIO
 import os
 
-import numpy as np                                                      # for data transformation
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')                                                   # for data transformation
 import matplotlib.pyplot as plt                                         # for visualizing the data
 import scipy.io.wavfile as wavfile                                      # for opening the media file
 import math                                                             # Importing libraries using import keyword.
@@ -94,6 +96,14 @@ def set_datetime():                                                     # Functi
 
 def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Function to transfer file from STM32 to RASPI
     global SD_Card_file_size_dict
+
+    config_dict.update({"hydrophoneArrayName": hydrophoneArrayName})
+    config_dict.update({"projectName": projectName})
+    config_dict.update({"lat": lat})
+    config_dict.update({"long": long})
+    with open("config.cfg", "w") as config_file:
+        json.dump(config_dict, config_file)  # encode dict into JSON
+
     this_filename =file.split(" ")[0]
     print("Transfer",this_filename)
     send_command_to_stm(f">XFR,{this_filename}")
@@ -278,7 +288,7 @@ def home():
         directory_list = directory()
         raspifile_list = raspi_directory()
 
-        return render_template("app.html", SD_status=SD_status, directory_list=directory_list,raspifile_list=raspifile_list, samplingFreq=config_dict.get("samplingFreq"),gain=config_dict.get("gain")  ,duration=config_dict.get("duration"),filePrefix=config_dict.get("filePrefix") )
+        return render_template("app.html", SD_status=SD_status, directory_list=directory_list,raspifile_list=raspifile_list, samplingFreq=config_dict.get("samplingFreq"),gain=config_dict.get("gain")  ,duration=config_dict.get("duration"),filePrefix=config_dict.get("filePrefix"),hydrophoneArrayName=config_dict.get("hydrophoneArrayName"),projectName=config_dict.get("projectName"),lat=config_dict.get("lat"),long=config_dict.get("long") )
 
 if __name__ == "__main__":
     print("Initializing")
