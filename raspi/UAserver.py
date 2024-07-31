@@ -108,7 +108,9 @@ def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Functi
     print("Transfer",this_filename)
     send_command_to_stm(f">XFR,{this_filename}")
 
-    f=open("./download/"+this_filename[:-3]+"WAV","wb")                 #open file for writing on RASPI.
+    f=open("./download/"+this_filename[:-3]+"DAT","wb")                 #open DAT file for writing on RASPI.
+    g=open("./download/"+this_filename[:-3]+"WAV","wb")                 #open WAV file for writing on RASPI.
+    file_read_position =0
 
     TotalBytes= SD_Card_file_size_dict.get(this_filename)
     TotalInts=TotalBytes>>1
@@ -119,12 +121,26 @@ def transfer(file,hydrophoneArrayName,projectName,lat,long,gain):       # Functi
         if bytestoread > BUFFER_SIZE:
             f.write(bytearray(stm_to_raspi()))
             bytestoread=bytestoread-BUFFER_SIZE
-        elif bytestoread == 0:
+        elif bytestoread == 0:  #we have read all the file data so now recreate the file with 32768 subtracted from all values in the file
+            f.close()                                                   #close the DAT file
+            f=open("./download/"+this_filename[:-3]+"DAT","rb")         #and reopen DAT file for reading
+            while file_read_position < TotalBytes:
+                if file_read_position < 64:  # but don't change the data in the header section so skip the first 64 bytes
+                    tb= f.read(1)
+                    file_read_position=file_read_position+1
+                    g.write(tb)
+                else:
+                    ti=f.read(2)
+                    file_read_position=file_read_position+2
+                    v=ti[0]+ti[1]*256
+                    uv=int(v-32768)
+                    g.write(uv.to_bytes(2,'little', signed =True))
+            g.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain)) #then add the metadata at the end of the file
             break
         else:
-            f.write(bytearray(stm_to_raspi()[0:bytestoread]))           # we must have less than BUFFER_SIZE bytes so we need to truncate the bytearray
+            f.write(bytearray(stm_to_raspi()[0:bytestoread]))           # we must have less than BUFFER_SIZE bytes so we need to truncate the bytearray         
             bytestoread = 0
-            f.write(createwavmetadata(hydrophoneArrayName,projectName,lat,long,gain))
+    g.close()
     f.close()
     toc = time.perf_counter()
     print(f"  Time to save {toc - tic:0.4f} secs.  ",int(TotalBytes/(toc-tic))/1000000,"Mbytes per sec" )
@@ -265,17 +281,20 @@ def home():
         elif button == "directory":
             directory()
         elif button == "transfer":
-            transfer(request.form["file"],request.form["hydrophoneArrayName"],request.form["projectName"],request.form["lat"],request.form["long"],request.form["gain"])
+            if len(SD_Card_file_size_dict) != 0:
+                transfer(request.form["file"],request.form["hydrophoneArrayName"],request.form["projectName"],request.form["lat"],request.form["long"],request.form["gain"])
         elif button == "analyze":
-            print("X ",request.form["wavfile"])
-            analyze(request.form["wavfile"])
+            if len(raspi_directory()) != 0:
+                 analyze(request.form["wavfile"])
         elif button == "download":
-            print("Download ", request.form["wavfile"])
-            return redirect(url_for('download',filename=request.form["wavfile"]))
+           if len(raspi_directory()) != 0:
+               return redirect(url_for('download',filename=request.form["wavfile"]))
         elif button == "delete":
-            delete(request.form["file"])
+            if len(SD_Card_file_size_dict) != 0:
+                delete(request.form["file"])
         elif button == "deletewav":
-            deletewav(request.form["wavfile"])
+            if len(raspi_directory()) != 0:
+                 deletewav(request.form["wavfile"])
         elif button == "formatSD":
             format()
         else:
